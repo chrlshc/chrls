@@ -42,6 +42,13 @@ from apscheduler.triggers.interval import IntervalTrigger
 # Monitoring
 from prometheus_client import Counter, Histogram, Gauge
 
+# Routers
+from ai.lead_intelligence.router import router as lead_intelligence_router
+from crm.email_engine.router import router as email_engine_router
+from crm.smart_pipeline.api.routes import router as smart_pipeline_router
+from automation.social_automation.router import router as social_automation_router
+from billing.revenue_automation.router import router as billing_router
+
 load_dotenv()
 
 # Configure structured logging
@@ -582,6 +589,13 @@ app = FastAPI(
     version="2.2.0",
     lifespan=lifespan
 )
+
+# Mount routers
+app.include_router(lead_intelligence_router, prefix="/ai/lead_intelligence")
+app.include_router(email_engine_router, prefix="/crm/email_engine")
+app.include_router(smart_pipeline_router, prefix="/crm/smart_pipeline")
+app.include_router(social_automation_router, prefix="/automation/social_automation")
+app.include_router(billing_router, prefix="/billing")
 
 # ========================
 # API ENDPOINTS
