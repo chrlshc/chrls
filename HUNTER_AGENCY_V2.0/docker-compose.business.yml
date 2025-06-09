@@ -1,0 +1,326 @@
+version: '3.8'
+
+# 🎯 HUNTER AGENCY - Production Infrastructure
+# Complete Docker orchestration with dependencies, health checks, and auto-migrations
+
+services:
+  # ============================================================================
+  # 🗄️ DATABASE LAYER
+  # ============================================================================
+  
+  postgres:
+    image: postgres:15-alpine
+    container_name: hunter_crm_postgres
+    environment:
+      POSTGRES_DB: hunter_agency
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secure_password_123}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d hunter_agency"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - hunter_network
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================================
+  # 🔄 CACHE LAYER
+  # ============================================================================
+  
+  redis:
+    image: redis:7-alpine
+    container_name: hunter_crm_redis
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis_secure_123}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+      - ./redis/redis.conf:/etc/redis/redis.conf
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - hunter_network
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  # ============================================================================
+  # 🔄 DATABASE MIGRATIONS
+  # ============================================================================
+  
+  migrations:
+    build:
+      context: .
+      dockerfile: Dockerfile.migrations
+    container_name: hunter_crm_migrations
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-secure_password_123}@postgres:5432/hunter_agency
+      PYTHONPATH: /app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./alembic:/app/alembic
+      - ./crm:/app/crm
+    networks:
+      - hunter_network
+    restart: "no"
+    command: ["alembic", "upgrade", "head"]
+
+  # ============================================================================
+  # 🎯 CRM API SERVICE
+  # ============================================================================
+  
+  crm_api:
+    build:
+      context: .
+      dockerfile: Dockerfile.crm
+      args:
+        BUILD_ENV: production
+    container_name: hunter_crm_api
+    environment:
+      # Database
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-secure_password_123}@postgres:5432/hunter_agency
+      # Redis
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis_secure_123}@redis:6379/0
+      # Security
+      SECRET_KEY: ${SECRET_KEY:-your_super_secret_key_change_in_production}
+      ACCESS_TOKEN_EXPIRE_MINUTES: 30
+      ALGORITHM: HS256
+      # API Config
+      API_V1_STR: "/api/v1"
+      PROJECT_NAME: "Hunter Agency CRM"
+      DEBUG: "false"
+      # Email
+      SMTP_TLS: "true"
+      SMTP_PORT: 587
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      # External APIs
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
+      # Monitoring
+      SENTRY_DSN: ${SENTRY_DSN}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - hunter_network
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # ============================================================================
+  # 🤖 BACKGROUND WORKERS
+  # ============================================================================
+  
+  crm_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.crm
+    container_name: hunter_crm_worker
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-secure_password_123}@postgres:5432/hunter_agency
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis_secure_123}@redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-your_super_secret_key_change_in_production}
+      WORKER_MODE: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      crm_api:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - hunter_network
+    restart: unless-stopped
+    command: ["python", "-m", "crm.workers.qualification_worker"]
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================================
+  # 📧 EMAIL TESTING (Development)
+  # ============================================================================
+  
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: hunter_crm_mailhog
+    ports:
+      - "8025:8025"  # Web UI
+      - "1025:1025"  # SMTP
+    networks:
+      - hunter_network
+    restart: unless-stopped
+    profiles:
+      - dev
+      - testing
+
+  # ============================================================================
+  # 📊 MONITORING & OBSERVABILITY
+  # ============================================================================
+  
+  grafana:
+    image: grafana/grafana:latest
+    container_name: hunter_crm_grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin123}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: http://localhost:3001
+    ports:
+      - "3001:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    depends_on:
+      - postgres
+    networks:
+      - hunter_network
+    restart: unless-stopped
+    profiles:
+      - monitoring
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: hunter_crm_prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus:/etc/prometheus
+      - prometheus_data:/prometheus
+    networks:
+      - hunter_network
+    restart: unless-stopped
+    profiles:
+      - monitoring
+
+  # ============================================================================
+  # 🔄 REVERSE PROXY (Production)
+  # ============================================================================
+  
+  nginx:
+    image: nginx:alpine
+    container_name: hunter_crm_nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./nginx/ssl:/etc/nginx/ssl
+      - ./static:/var/www/static
+    depends_on:
+      crm_api:
+        condition: service_healthy
+    networks:
+      - hunter_network
+    restart: unless-stopped
+    profiles:
+      - production
+
+# ============================================================================
+# 🌐 NETWORKS
+# ============================================================================
+
+networks:
+  hunter_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# ============================================================================
+# 💾 PERSISTENT VOLUMES
+# ============================================================================
+
+volumes:
+  postgres_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/postgres
+  
+  redis_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/redis
+  
+  grafana_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/grafana
+  
+  prometheus_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/prometheus
+
+# ============================================================================
+# 🎯 DEPLOYMENT PROFILES
+# ============================================================================
+
+# Development: docker-compose up --profile dev
+# Testing: docker-compose up --profile testing  
+# Monitoring: docker-compose up --profile monitoring
+# Production: docker-compose up --profile production
+
+# Quick commands:
+# Start core services: docker-compose up postgres redis crm_api
+# Start with monitoring: docker-compose --profile monitoring up
+# Production deploy: docker-compose --profile production up -d
