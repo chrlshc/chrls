@@ -1,0 +1,35 @@
+# 🔥 HUNTER AGENCY V2.2 - ASYNC REQUIREMENTS
+# Core API
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+python-multipart==0.0.6
+
+# Database (Async SQLite)
+databases[aiosqlite]==0.8.0
+aiosqlite==0.19.0
+
+# Authentication & Security
+passlib[bcrypt]==1.7.4
+python-jose[cryptography]==3.3.0
+bcrypt==4.1.2
+
+# Email Engine
+sendgrid==6.11.0
+httpx==0.25.2
+
+# Background Tasks & Scheduling
+apscheduler==3.10.4
+
+# Monitoring
+prometheus-client==0.19.0
+
+# Logging
+structlog==23.2.0
+
+# Environment
+python-dotenv==1.0.0
+
+# Development
+pytest==7.4.3
+pytest-asyncio==0.21.1

@@ -1,0 +1,28 @@
+# Configuration IA Scoring Engine
+scoring:
+  # Poids des différents modèles
+  weights:
+    algorithmic: 0.5      # Règles business
+    ai_contextual: 0.3    # Analyse IA
+    ml_prediction: 0.2    # Machine Learning
+  
+  # Seuils de classification  
+  thresholds:
+    hot_lead: 8.0         # Score ≥ 8 = HOT
+    warm_lead: 6.5        # Score ≥ 6.5 = WARM
+    cold_lead: 4.0        # Score ≥ 4 = COLD
+    # < 4 = TRASH
+  
+  # Actions automatiques
+  actions:
+    hot_lead: "CONTACT_IMMEDIATELY"
+    warm_lead: "EMAIL_SEQUENCE"
+    cold_lead: "NURTURE_CAMPAIGN" 
+    trash_lead: "DISCARD"
+  
+  # Auto-scoring
+  auto_scoring:
+    enabled: true
+    interval_hours: 1
+    batch_size: 100
+    max_concurrent: 5
